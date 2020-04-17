@@ -57,7 +57,7 @@ def bokeh_plot(gpt_data, var1, var2, units=None, p=None, show_plot=True, **param
     p.xaxis.axis_label = f"{format_label(var1, use_base=True)} ({x_units})"
     p.yaxis.axis_label = f"{ylabel_str} ({y_units})"
     
-    zero_y_strs = ['sigma_', 'norm_', 'charge']
+    zero_y_strs = ['sigma_', 'norm_', 'charge', 'energy']
     if (any(any(substr in varstr for substr in zero_y_strs) for varstr in var2)):
         p.y_range.start = 0       
     
@@ -83,6 +83,10 @@ def bokeh_plot_dist1d(pmd, var, units=None, p=None, show_plot=True, **params):
     
     if (isinstance(pmd, GPT)):
         pmd, screen_key, screen_value = get_screen_data(pmd, **params)
+    else:
+        pmd = postprocess_screen(pmd, **params)
+        screen_key = None
+        screen_value = None
             
     if('nbins' in params):
         nbins = params['nbins']
@@ -94,9 +98,9 @@ def bokeh_plot_dist1d(pmd, var, units=None, p=None, show_plot=True, **params):
     q = pmd.weight / charge_scale
     q_units = check_mu(charge_prefix)+charge_base_units
         
-    subtract_mean = True
-    if (var == 'r'):
-        subtract_mean = False
+    subtract_mean = False
+    if (var in ['x','y','z','t']):
+        subtract_mean = True
     (x, x_units, x_scale, mean_x, mean_x_units, mean_x_scale) = scale_mean_and_get_units(getattr(pmd, var), pmd.units(var).unitSymbol, subtract_mean=subtract_mean, weights=q)
            
     if (var == 'r'):
@@ -162,6 +166,10 @@ def bokeh_plot_dist2d(pmd, var1, var2, ptype='hist2d', units=None, p=None, show_
     screen_value = None
     if (isinstance(pmd, GPT)):
         pmd, screen_key, screen_value = get_screen_data(pmd, **params)
+    else:
+        pmd = postprocess_screen(pmd, **params)
+        screen_key = None
+        screen_value = None
         
     p.grid.visible = False
     

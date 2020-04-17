@@ -36,13 +36,15 @@ def format_label(s, use_base=False, remove_underscore=True, add_underscore=True)
     return s
 
 def get_y_label(var):
-    y_label_str = 'Value'
+    ylabel_str = 'Value'
     if all('norm_' in var_str for var_str in var):
         ylabel_str = 'Emittance'
     if all('sigma_' in var_str for var_str in var):
         ylabel_str = 'Size'
     if all('charge' in var_str for var_str in var):
         ylabel_str = 'Charge'
+    if all('energy' in var_str for var_str in var):
+        ylabel_str = 'Energy'
     
     return ylabel_str
 
