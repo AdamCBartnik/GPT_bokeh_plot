@@ -190,31 +190,19 @@ def pad_data_with_zeros(edges_plt, hist_plt, sides=[True,True]):
 
 
 
-def hist2d(p,x,y,weights=None,bins=[100,100],colormap=None, density=False, is_radial_var=[False,False]):
-    if (is_radial_var[0]):
-        x = x*x
-    if (is_radial_var[1]):
-        y = y*y
+def hist2d(p,x,y,weights=None,bins=[100,100],colormap=None, density=False):
     H, xedges, yedges = np.histogram2d(x, y, bins=bins, weights=weights, density=density)
-    if (is_radial_var[0]):
-        xedges = np.sqrt(xedges)
-    if (is_radial_var[1]):
-        yedges = np.sqrt(yedges)
     H = H.T
     palette = [RGB(*tuple(rgb)).to_hex() for rgb in (255*colormap(np.arange(256))).astype('int')]
     color_mapper = LinearColorMapper(palette=palette, low=0.0, high=np.max(H))
-    
-    if (not any(is_radial_var)):
-        p.image(image=[H], x=min(xedges), y=min(yedges), dw=(max(xedges)-min(xedges)), dh=(max(yedges)-min(yedges)), color_mapper=color_mapper, level="image")
-    else:
-        bokeh_pcolor(p,xedges,yedges,H,color_mapper)
-        
-    
+    p.image(image=[H], x=min(xedges), y=min(yedges), dw=(max(xedges)-min(xedges)), dh=(max(yedges)-min(yedges)), color_mapper=color_mapper, level="image")
+    # bokeh_pcolor(p,xedges,yedges,H,color_mapper)
     color_bar = ColorBar(color_mapper=color_mapper, label_standoff=12, border_line_color=None, location=(0,0))   
     p.add_layout(color_bar, 'right')
 
         
-def bokeh_pcolor(p,xedges,yedges,H,color_mapper):      
+def bokeh_pcolor(p,xedges,yedges,H,color_mapper): 
+    # Still not great, edges of rectangles do not always touch. I blame bokeh...
     x_list = 0.5*(xedges[1:] + xedges[:-1])
     y_list = 0.5*(yedges[1:] + yedges[:-1])
     w_list = xedges[1:] - xedges[:-1]
@@ -278,6 +266,37 @@ def scatter_hist2d(p, x, y, bins=10, range=None, density=False, weights=None,
     p.add_layout(color_bar, 'right')
     
     
+def scatter_color(p, pmd, x, y, color_var='density', bins=10, weights=None, colormap = None, **kwargs):
+    
+    force_zero = False
+       
+    if (color_var=='density'):
+        h, xe, ye = np.histogram2d(x, y, bins=bins, weights=weights)
+        c = map_hist(x, y, h, bins=(xe, ye))
+        force_zero = True
+        title_str = 'Density'
+    else:
+        q = pmd.weight
+        (c, c_units, c_scale, avgc, avgc_units, avgc_scale) = scale_mean_and_get_units(getattr(pmd, color_var), pmd.units(color_var).unitSymbol, subtract_mean=True, weights=q)
+        title_str = f'{color_var} ({c_units})'
+    
+    if (colormap is None):
+        colormap = mpl.cm.get_cmap('jet') 
+    
+    vmin = np.min(c)
+    vmax = np.max(c)
+    if (force_zero):
+        vmin = 0.0
+    
+    colors = ["#%02x%02x%02x" % (int(r), int(g), int(b)) for r, g, b, _ in 255*colormap(mpl.colors.Normalize(vmin=vmin, vmax=vmax)(c))]
+    p.scatter(x, y, line_color=None, fill_color=colors)
+    
+    palette = [RGB(*tuple(rgb)).to_hex() for rgb in (255*colormap(np.arange(256))).astype('int')]
+    color_mapper = LinearColorMapper(palette=palette, low=vmin, high=vmax)
+    color_bar = ColorBar(color_mapper=color_mapper, label_standoff=12, border_line_color=None, location=(0,0))   
+    p.add_layout(color_bar, 'right')
+            
+    
 def radial_histogram_no_units(r, weights=None, nbins=1000):
 
     """ Performs histogramming of the varibale r using non-equally space bins """
@@ -295,7 +314,7 @@ def radial_histogram_no_units(r, weights=None, nbins=1000):
     
     
 
-def make_parameter_table(data, headers, table_width=None, table_height=None):
+def make_parameter_table(p_table, data, headers, table_width=None, table_height=None):
     if (data==None or headers==None):
         print('Making default data')
         data = dict(
@@ -314,12 +333,22 @@ def make_parameter_table(data, headers, table_width=None, table_height=None):
         if (key not in headers):
             raise ValueError(f'Header dictionary does not contain: {key}')
         columns = columns + [TableColumn(field=key, title=headers[key])]
-        
-    if (table_width==None or table_height==None):
-        data_table = DataTable(source=source, columns=columns, editable=False, index_position=None)
+    if (p_table == None):
+        if (table_width==None or table_height==None):
+            p_table = DataTable(source=source, columns=columns, editable=False, index_position=None)
+        else:
+            p_table = DataTable(source=source, columns=columns, width=table_width, height=table_height, editable=False, index_position=None)
     else:
-        data_table = DataTable(source=source, columns=columns, width=table_width, height=table_height, editable=False, index_position=None)
-    return data_table
+        p_table.source=source
+        p_table.columns=columns
+        p_table.editable=False
+        p_table.index_position=None
+        if (table_width is not None):
+            p_table.width=table_width
+        if (table_height is not None):
+            p_table.height=table_height
+    
+    return p_table
 
 
 def add_row(data, **params):
@@ -329,3 +358,52 @@ def add_row(data, **params):
         data[p] = data[p] + [params[p]]
         
     return data
+
+
+def divide_particles(particle_group, nbins = 100, key='t'):
+    """
+    Splits a particle group into even slices of 'key'. Returns a list of particle groups. 
+    """
+    x = getattr(particle_group, key) 
+    
+    if (key == 'r'):
+        x = x*x
+        xmin = 0  # force r=0 as min, could use min(x) here, optionally
+        xmax = max(x)
+        dx = (xmax-xmin)/(nbins-1)
+        edges = np.linspace(xmin, xmax + 0.01*dx, nbins+1) # extends slightly further than max(r2)
+        dx = edges[1]-edges[0]
+    else:
+        dx = (max(x)-min(x))/(nbins-1)
+        edges = np.linspace(min(x) - 0.01*dx, max(x) + 0.01*dx, nbins+1) # extends slightly further than range(r2)
+        dx = edges[1]-edges[0]
+    
+    which_bins = np.digitize(x, edges)-1
+    
+    if (key == 'r'):
+        x = np.sqrt(x)
+        edges = np.sqrt(edges)
+            
+    # Split particles
+    plist = []
+    for bin_i in range(nbins):
+        chunk = which_bins==bin_i
+        # Prepare data
+        data = {}
+        #keys = ['x', 'px', 'y', 'py', 'z', 'pz', 't', 'status', 'weight'] 
+        for k in particle_group._settable_array_keys:
+            data[k] = getattr(particle_group, k)[chunk]
+        # These should be scalars
+        data['species'] = particle_group.species
+        
+        # New object
+        p = ParticleGroup(data=data)
+        plist.append(p)
+    
+    # normalization for sums of particle properties, = 1 / histogram bin width
+    if (key == 'r'):
+        density_norm = 1.0/(np.pi*(edges[1]**2 - edges[0]**2))
+    else:
+        density_norm = 1.0/(edges[1] - edges[0])
+    
+    return plist, edges, density_norm

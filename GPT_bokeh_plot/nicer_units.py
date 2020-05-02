@@ -2,7 +2,7 @@ import numpy as np
 
 
 
-def nicer_scale_prefix(scale, mm_cutoff=0.1):
+def nicer_scale_prefix(scale, milli_cutoff=0.1):
     """
     Returns a nice factor and a SI prefix string 
     
@@ -19,7 +19,7 @@ def nicer_scale_prefix(scale, mm_cutoff=0.1):
     if max_val < 1e-28:
         return 1, ''
         
-    fudge_factor=10**(-3.0/2.0)/mm_cutoff
+    fudge_factor=10**(-3.0/2.0)/milli_cutoff
         
     max_power=3*np.sign(np.log10(max_val))*round(abs(np.log10(max_val*fudge_factor)/3))
     f = 10**max_power
@@ -29,7 +29,7 @@ def nicer_scale_prefix(scale, mm_cutoff=0.1):
 
 
 
-def nicer_array(a, mm_cutoff=0.1):
+def nicer_array(a, milli_cutoff=0.1):
     """
     Returns a scaled array, the scaling, and a unit prefix
     
@@ -48,7 +48,7 @@ def nicer_array(a, mm_cutoff=0.1):
         a = np.array(a)
         x = a.ptp()
      
-    fac, prefix = nicer_scale_prefix( x, mm_cutoff=mm_cutoff )
+    fac, prefix = nicer_scale_prefix( x, milli_cutoff=milli_cutoff )
     
     return a/fac, fac,  prefix
 

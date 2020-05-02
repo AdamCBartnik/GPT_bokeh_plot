@@ -1,14 +1,51 @@
 import numpy as np
+import copy
 from pmd_beamphysics import ParticleGroup
-
-
+import numpy.polynomial.polynomial as poly
+from .tools import divide_particles
 
 def postprocess_screen(screen, **params):
     
-    if ('cylindrical_copies' in params and params['cylindrical_copies']>0):
-        screen = add_cylindrical_copies(screen, params['cylindrical_copies'])
+    if ('take_slice' in params):
+        (take_slice_var, slice_index, n_slices) = params['take_slice']
+        if (n_slices > 0):
+            screen = copy.deepcopy(screen)
+            screen = take_slice(screen, take_slice_var, slice_index, n_slices)
+            
+    if ('cylindrical_copies' in params):
+        cylindrical_copies_n = params['cylindrical_copies']
+        if (cylindrical_copies_n > 0):
+            screen = copy.deepcopy(screen)
+            screen = add_cylindrical_copies(screen, params['cylindrical_copies'])
+               
+    if ('remove_correlation' in params):
+        (remove_correlation_var1, remove_correlation_var2, remove_correlation_n) = params['remove_correlation']
+        if (remove_correlation_n >= 0):
+            screen = copy.deepcopy(screen)
+            screen = remove_correlation(screen, remove_correlation_var1, remove_correlation_var2, remove_correlation_n)
+        
     return screen
 
+
+def take_slice(screen, take_slice_var, slice_index, n_slices):
+    p_list, edges, density_norm = divide_particles(screen, nbins=n_slices, key=take_slice_var)
+    if (slice_index>=0 and slice_index<len(p_list)):
+        return p_list[slice_index]
+    else:
+        return screen
+
+
+def remove_correlation(screen, var1, var2, max_power):
+
+    x = getattr(screen,var1)
+    y = getattr(screen,var2)
+    
+    c = poly.polyfit(x, y, max_power)
+    y_new = poly.polyval(x, c)
+    
+    setattr(screen, var2, y-y_new)
+    
+    return screen
 
 
 def add_cylindrical_copies(screen, n_copies):
@@ -59,3 +96,5 @@ def add_cylindrical_copies(screen, n_copies):
     )
     
     return ParticleGroup(data=data)
+
+
