@@ -8,27 +8,27 @@ from bokeh.layouts import row as row_layout
 from bokeh import palettes  as palettes 
 import numpy as np
 import matplotlib as mpl
+import copy
 from distgen.tools import *
 from gpt.gpt import GPT as GPT
-from pmd_beamphysics import ParticleGroup
 from pmd_beamphysics.units import multiply_units
+from pmd_beamphysics.units import c_light, e_charge
 from operator import itemgetter 
+from .ParticleGroupExtension import divide_particles
 from .tools import *
 from .nicer_units import *
-from pmd_beamphysics.units import c_light, e_charge
+
 
 
 def gpt_plot(gpt_data_input, var1, var2, units=None, p=None, show_plot=True, format_input_data=True, **params):
+    return_plots = (p == None)
     
     if (format_input_data):
-        gpt_data = copy.deepcopy(gpt_data_input)
-        for tout in gpt_data.tout:
-            tout.drift_to_z()
+        gpt_data = convert_gpt_data(gpt_data_input)
     else:
-        # Assume that this is already a copy of the data, and touts have been drift_to_z() already
         gpt_data = gpt_data_input
     
-    p = make_default_plot(p, plot_width=400, plot_height=300, **params)
+    p = make_default_plot(p, plot_width=500, plot_height=400, **params)
     line_colors = palettes.Set1[8]
         
     (x, x_units, x_scale) = scale_and_get_units(gpt_data.stat(var1, 'tout'), gpt_data.stat_units(var1).unitSymbol)
@@ -38,11 +38,11 @@ def gpt_plot(gpt_data_input, var1, var2, units=None, p=None, show_plot=True, for
         var2 = [var2]
 
     if ('n_slices' in params):
-        for p in gpt_data.particles:
-            p.n_slices = params['n_slices']
+        for par in gpt_data.particles:
+            par.n_slices = params['n_slices']
     if ('slice_key' in params):
-        for p in gpt_data.particles:
-            p.slice_key = params['slice_key']
+        for par in gpt_data.particles:
+            par.slice_key = params['slice_key']
     
     # Combine all y data into single array to find good units
     all_y = np.array([])
@@ -91,15 +91,28 @@ def gpt_plot(gpt_data_input, var1, var2, units=None, p=None, show_plot=True, for
         p.y_range.start = 0
     
     # Cases where the y-axis range should use the median, instead of the max (e.g. emittance plots)
-    use_median_y_strs = ['norm_emit_x','norm_emit_y']
+    use_median_y_strs = ['norm_emit_x','norm_emit_y','slice_emit_x','slice_emit_y']
     if (any(any(substr in varstr for substr in use_median_y_strs) for varstr in var2)):
         p.y_range.end = 2.0*np.median(all_y)  
         
     if show_plot:
         show(p)
+    else:
+        if (return_plots):
+            return p
     
 
 def gpt_plot_dist1d(pmd, var, plot_type='charge', units=None, p=None, p_table=None, show_plot=True, table_on=True, **params):
+    return_plots = (p == None)
+    
+    screen_key = None
+    screen_value = None
+    if (isinstance(pmd, GPT)):
+        pmd, screen_key, screen_value = get_screen_data(pmd, **params)
+    if (not isinstance(pmd, ParticleGroupExtension)):
+        pmd = ParticleGroupExtension(input_particle_group=pmd)
+    pmd = postprocess_screen(pmd, **params)
+    
     plot_type = plot_type.lower()
     
     density_types = {'charge'}
@@ -117,14 +130,8 @@ def gpt_plot_dist1d(pmd, var, plot_type='charge', units=None, p=None, p_table=No
     if any([d in plot_type for d in positive_types]):
         min_particles = 5
     
-    p = make_default_plot(p, plot_width=400, plot_height=300, **params)
-    
-    screen_key = None
-    screen_value = None
-    if (isinstance(pmd, GPT)):
-        pmd, screen_key, screen_value = get_screen_data(pmd, **params)
-    pmd = postprocess_screen(pmd, **params)
-            
+    p = make_default_plot(p, plot_width=500, plot_height=400, **params)
+                
     if('nbins' in params):
         nbins = params['nbins']
     else:
@@ -201,20 +208,29 @@ def gpt_plot_dist1d(pmd, var, plot_type='charge', units=None, p=None, p_table=No
             show(row_layout(p, p_table))
         else:
             show(p)
+    else:
+        if (return_plots):
+            if (p_table is not None):
+                return row_layout(p, p_table)
+            else:
+                return p
             
 
 
-def gpt_plot_dist2d(pmd, var1, var2, ptype='hist2d', units=None, p=None, show_plot=True, table_on=True, **params):
-
-    p = make_default_plot(p, plot_width=500, plot_height=400, tooltips=False, **params)
-    p.grid.visible = False 
+def gpt_plot_dist2d(pmd, var1, var2, plot_type='histogram', units=None, p=None, show_plot=True, table_on=True, **params):
+    return_plots = (p == None)
         
     screen_key = None
     screen_value = None
     if (isinstance(pmd, GPT)):
         pmd, screen_key, screen_value = get_screen_data(pmd, **params)
+    if (not isinstance(pmd, ParticleGroupExtension)):
+        pmd = ParticleGroupExtension(input_particle_group=pmd)
     pmd = postprocess_screen(pmd, **params)
-        
+    
+    p = make_default_plot(p, plot_width=500, plot_height=400, tooltips=False, **params)
+    p.grid.visible = False 
+                
     if('axis' in params and params['axis']=='equal'):
         p.match_aspect = True
     
@@ -239,12 +255,12 @@ def gpt_plot_dist2d(pmd, var1, var2, ptype='hist2d', units=None, p=None, show_pl
     (x, x_units, x_scale, avgx, avgx_units, avgx_scale) = scale_mean_and_get_units(getattr(pmd, var1), pmd.units(var1).unitSymbol, subtract_mean=True, weights=q)
     (y, y_units, y_scale, avgy, avgy_units, avgy_scale) = scale_mean_and_get_units(getattr(pmd, var2), pmd.units(var2).unitSymbol, subtract_mean=True, weights=q)
                 
-    if(ptype=="scatter"):
+    if(plot_type=="scatter"):
         color_var = 'density'
         if ('color_var' in params):
             color_var = params['color_var']
         scatter_color(p, pmd, x, y, color_var=color_var, bins=nbins, weights=q)
-    if(ptype=="hist2d"):
+    if(plot_type=="histogram"):
         hist2d(p, x, y, bins=nbins, weights=q, colormap=colormap)
         
     p.xaxis.axis_label = f"{format_label(var1)} ({x_units})"
@@ -289,6 +305,12 @@ def gpt_plot_dist2d(pmd, var1, var2, ptype='hist2d', units=None, p=None, show_pl
             show(row_layout(p, p_table))
         else:
             show(p)
+    else:
+        if (return_plots):
+            if (p_table is not None):
+                return row_layout(p, p_table)
+            else:
+                return p
             
         
     

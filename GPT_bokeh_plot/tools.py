@@ -7,12 +7,13 @@ from bokeh.transform import linear_cmap
 from bokeh import palettes  as palettes 
 import numpy as np
 import matplotlib as mpl
+import copy
 from distgen.tools import *
 from gpt.gpt import GPT as GPT
-from pmd_beamphysics import ParticleGroup
+from .ParticleGroupExtension import ParticleGroupExtension
 from operator import itemgetter 
 from .nicer_units import *
-from .postprocessing import *
+from .postprocessing import postprocess_screen
 
 
 def format_label(s, use_base=False, remove_underscore=True, add_underscore=True):
@@ -35,6 +36,51 @@ def format_label(s, use_base=False, remove_underscore=True, add_underscore=True)
         s = s.replace('_r', 'ᵣ')
     return s
 
+
+def get_dist_plot_type(dist_y):
+    dist_y = dist_y.lower()
+    
+    if (dist_y == 'charge density'):
+        var='charge'
+    if (dist_y == 'emittance x'):
+        var='norm_emit_x'
+    if (dist_y == 'emittance y'):
+        var='norm_emit_y'
+    if (dist_y == 'emittance 4d'):
+        var='sqrt_norm_emit_4d'
+    if (dist_y == 'sigma x'):
+        var='sigma_x'
+    if (dist_y == 'sigma y'):
+        var='sigma_y'
+    
+    return var
+
+
+def get_trend_vars(trend_y):
+    trend_y = trend_y.lower()
+    
+    if (trend_y == 'beam size'):
+        var=['sigma_x', 'sigma_y']
+    if (trend_y == 'bunch length'):
+        var='sigma_t'
+    if (trend_y == 'emittance (x,y)'):
+        var=['norm_emit_x', 'norm_emit_y']
+    if (trend_y == 'emittance (4d)'):
+        var=['sqrt_norm_emit_4d']
+    if (trend_y == 'slice emit. (x,y)'):
+        var=['slice_emit_x', 'slice_emit_y']
+    if (trend_y == 'slice emit. (4d)'):
+        var=['slice_emit_4d']
+    if (trend_y == 'energy'):
+        var='mean_energy'
+    if (trend_y == 'trajectory'):
+        var=['mean_x', 'mean_y']
+    if (trend_y == 'charge'):
+        var='mean_charge'
+    
+    return var
+        
+
 def get_y_label(var):
     ylabel_str = 'Value'
     if all('norm_' in var_str for var_str in var):
@@ -47,6 +93,15 @@ def get_y_label(var):
         ylabel_str = 'Energy'
     
     return ylabel_str
+
+
+def convert_gpt_data(gpt_data_input):
+    gpt_data = copy.deepcopy(gpt_data_input)  # This is lazy, should just make a new GPT()
+    for i, pmd in enumerate(gpt_data_input.particles):
+        gpt_data.particles[i] = ParticleGroupExtension(input_particle_group=pmd)
+    for tout in gpt_data.tout:
+        tout.drift_to_z() # Turn all the touts into quasi-screens
+    return gpt_data
 
 
 def mean_weights(x,w):
@@ -117,30 +172,29 @@ def get_screen_data(gpt_data, **params):
         found_screen_value = 0
     
     screen = gpt_data.screen[screen_index]
-    screen = postprocess_screen(screen, **params)
     
     return (screen, screen_key, found_screen_value)
         
 
 def make_default_plot(p, plot_width=400, plot_height=300, tooltips=True, **params):
     
-    TOOLTIPS = [
-        ("", "(@x, @y)")
-    ]
+    params = {}
+    if (tooltips):
+        params['tooltips']=[("", "(@x, @y)")]
     
     tools = "pan,wheel_zoom,box_zoom,reset,save"
         
+    if('plot_width' in params and 'plot_height' in params):
+        plot_width = params['plot_width']
+        plot_height = params['plot_height']          
+        
     if(p is None):
-        if('plot_width' in params and 'plot_height' in params):
-            plot_width = params['plot_width']
-            plot_height = params['plot_height']           
-    
-        if (tooltips):
-            p = figure(plot_width=plot_width, plot_height=plot_height, tools=tools, tooltips=TOOLTIPS)
-        else:
-            p = figure(plot_width=plot_width, plot_height=plot_height, tools=tools)
-            
-    p.outline_line_color = [0,0,0]
+        p = figure(plot_width=plot_width, plot_height=plot_height, tools=tools, **params)
+        p.outline_line_color = [0,0,0]
+    else:
+        pass
+        # Need code to handle passed in figure
+        
     return p
 
 
@@ -359,51 +413,3 @@ def add_row(data, **params):
         
     return data
 
-
-def divide_particles(particle_group, nbins = 100, key='t'):
-    """
-    Splits a particle group into even slices of 'key'. Returns a list of particle groups. 
-    """
-    x = getattr(particle_group, key) 
-    
-    if (key == 'r'):
-        x = x*x
-        xmin = 0  # force r=0 as min, could use min(x) here, optionally
-        xmax = max(x)
-        dx = (xmax-xmin)/(nbins-1)
-        edges = np.linspace(xmin, xmax + 0.01*dx, nbins+1) # extends slightly further than max(r2)
-        dx = edges[1]-edges[0]
-    else:
-        dx = (max(x)-min(x))/(nbins-1)
-        edges = np.linspace(min(x) - 0.01*dx, max(x) + 0.01*dx, nbins+1) # extends slightly further than range(r2)
-        dx = edges[1]-edges[0]
-    
-    which_bins = np.digitize(x, edges)-1
-    
-    if (key == 'r'):
-        x = np.sqrt(x)
-        edges = np.sqrt(edges)
-            
-    # Split particles
-    plist = []
-    for bin_i in range(nbins):
-        chunk = which_bins==bin_i
-        # Prepare data
-        data = {}
-        #keys = ['x', 'px', 'y', 'py', 'z', 'pz', 't', 'status', 'weight'] 
-        for k in particle_group._settable_array_keys:
-            data[k] = getattr(particle_group, k)[chunk]
-        # These should be scalars
-        data['species'] = particle_group.species
-        
-        # New object
-        p = ParticleGroup(data=data)
-        plist.append(p)
-    
-    # normalization for sums of particle properties, = 1 / histogram bin width
-    if (key == 'r'):
-        density_norm = 1.0/(np.pi*(edges[1]**2 - edges[0]**2))
-    else:
-        density_norm = 1.0/(edges[1] - edges[0])
-    
-    return plist, edges, density_norm
